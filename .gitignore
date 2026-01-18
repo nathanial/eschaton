@@ -1,0 +1,11 @@
+# Lake build artifacts
+.lake/
+lake-manifest.json
+
+# Editor files
+.vscode/
+*.swp
+*~
+
+# macOS
+.DS_Store
