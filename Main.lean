@@ -115,11 +115,11 @@ def main : IO Unit := do
       canvas ← CanvasM.run' canvas do
         Afferent.Widget.executeCommandsBatched fontRegistry commands
         Afferent.Widget.renderCustomWidgets measureResult.widget layouts
-        -- Draw title
+        -- Draw title (centered on screen)
         let titleText := "ESCHATON"
         let (titleWidth, _) ← CanvasM.measureText titleText titleFont
         let titleX := (currentW - titleWidth) / 2.0
-        let titleY := currentH * 0.35
+        let titleY := currentH * 0.5
         CanvasM.fillTextColor titleText ⟨titleX, titleY⟩ titleFont (Color.rgba 0.9 0.85 0.7 1.0)
 
         -- Draw subtitle with pulsing effect
