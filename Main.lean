@@ -31,12 +31,12 @@ inductive Screen where
     ``` -/
 def sampleGalaxyConfig : Widget.GalaxyConfig := {
   systems := #[
-    { name := "Sol", x := 0.25, y := 0.25, color := Color.rgb 1.0 0.95 0.7, size := 8 },
-    { name := "Alpha Centauri", x := 0.70, y := 0.20, color := Color.rgb 1.0 0.8 0.4, size := 6 },
-    { name := "Sirius", x := 0.35, y := 0.50, color := Color.rgb 0.7 0.8 1.0, size := 10 },
-    { name := "Vega", x := 0.65, y := 0.45, color := Color.rgb 0.9 0.9 1.0, size := 7 },
-    { name := "Rigel", x := 0.30, y := 0.75, color := Color.rgb 0.6 0.7 1.0, size := 9 },
-    { name := "Betelgeuse", x := 0.72, y := 0.70, color := Color.rgb 1.0 0.5 0.3, size := 12 }
+    { name := "Sol", x := 0.25, y := 0.25, color := Color.rgb 1.0 0.95 0.7, size := 80 },
+    { name := "Alpha Centauri", x := 0.70, y := 0.20, color := Color.rgb 1.0 0.8 0.4, size := 60 },
+    { name := "Sirius", x := 0.35, y := 0.50, color := Color.rgb 0.7 0.8 1.0, size := 100 },
+    { name := "Vega", x := 0.65, y := 0.45, color := Color.rgb 0.9 0.9 1.0, size := 70 },
+    { name := "Rigel", x := 0.30, y := 0.75, color := Color.rgb 0.6 0.7 1.0, size := 90 },
+    { name := "Betelgeuse", x := 0.72, y := 0.70, color := Color.rgb 1.0 0.5 0.3, size := 120 }
   ]
   hyperlanes := #[
     { source := 0, target := 1 },  -- Sol - Alpha Centauri
@@ -196,8 +196,8 @@ def main : IO Unit := do
           CanvasM.fillTextColor promptText ⟨promptX, promptY⟩ debugFont (Color.rgba 0.6 0.6 0.7 promptAlpha)
 
       | .galaxy =>
-        -- Galaxy screen: show galaxy widget (no starfield)
-        let galaxyConfig := { state.galaxyConfig with labelFont := some _debugFontId }
+        -- Galaxy screen: show galaxy widget with animated stars
+        let galaxyConfig := { state.galaxyConfig with labelFont := some _debugFontId, time := t }
         let galaxyBuilder := Eschaton.Widget.galaxyWidget galaxyConfig
         let galaxyWidgetTree := Afferent.Arbor.buildFrom 2 galaxyBuilder
 

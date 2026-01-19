@@ -1,12 +1,16 @@
 /-
   Galaxy Widget
   A simple galaxy map widget showing star systems connected by hyperlanes.
+  Uses GPU shader-based star rendering with animated glow effects.
 -/
 import Afferent
 import Afferent.Arbor
+import Afferent.Shader.DSL
 import Tincture
+import Eschaton.Widget.Star
 
 open Afferent.Arbor
+open Afferent.Shader
 open Tincture (Color)
 
 namespace Eschaton.Widget
@@ -35,11 +39,12 @@ structure GalaxyConfig where
   hyperlaneWidth : Float := 1.5
   labelFont : Option FontId := none
   labelColor : Color := Tincture.Color.rgba 0.7 0.7 0.8 0.8
+  time : Float := 0.0  -- Animation time in seconds
   deriving Inhabited
 
-/-- Galaxy widget spec using basic render commands. -/
+/-- Galaxy widget spec using GPU shader-based star rendering. -/
 def galaxySpec (config : GalaxyConfig) : Afferent.Arbor.CustomSpec := {
-  skipCache := false  -- Static display, can be cached
+  skipCache := true  -- Animation requires fresh render each frame
   measure := fun _ _ => (0, 0)  -- Use layout-provided size
   collect := fun layout =>
     let rect := layout.contentRect
@@ -62,19 +67,29 @@ def galaxySpec (config : GalaxyConfig) : Afferent.Arbor.CustomSpec := {
             let y2 := targetSys.y * rect.height
             RenderM.emit (.strokeLine ⟨x1, y1⟩ ⟨x2, y2⟩ config.hyperlaneColor config.hyperlaneWidth)
 
-      -- Draw star systems
+      -- Draw star systems using GPU shader (glow layers first, then cores)
       for sys in config.systems do
         let cx := sys.x * rect.width
         let cy := sys.y * rect.height
-        RenderM.fillCircle' cx cy sys.size sys.color
+
+        -- 8 floats: center(2), size(1), time(1), color(4)
+        let params : Array Float := #[
+          cx, cy,                                       -- center
+          sys.size,                                     -- size
+          config.time,                                  -- time (raw seconds)
+          sys.color.r, sys.color.g, sys.color.b, sys.color.a  -- color
+        ]
+
+        RenderM.drawFragment starFragment.hash starFragment.primitive.toUInt32
+          params starFragment.instanceCount.toUInt32
 
       -- Draw labels if font provided
       if let some font := config.labelFont then
         for sys in config.systems do
           let cx := sys.x * rect.width
           let cy := sys.y * rect.height
-          -- Position label below the star
-          let labelY := cy + sys.size + 12
+          -- Position label below the star (account for glow radius)
+          let labelY := cy + sys.size * 0.9 + 12
           RenderM.fillText sys.name cx labelY font config.labelColor
 
       RenderM.popTransform
