@@ -170,8 +170,11 @@ def reactiveGalaxy (hitInfos : Array StarHitInfo)
         if hitWidgetScroll scrollData name then
           match getGalaxyRect widget layouts name with
           | some rect =>
-            let relX := scrollData.scroll.x - rect.x
-            let relY := scrollData.scroll.y - rect.y
+            -- Anchor coordinates must be relative to screen center (the zoom origin)
+            let centerX := rect.width / 2.0
+            let centerY := rect.height / 2.0
+            let relX := scrollData.scroll.x - rect.x - centerX
+            let relY := scrollData.scroll.y - rect.y - centerY
             let delta := scrollData.scroll.deltaY
             pure (applyInput (.zoom delta relX relY) state)
           | none => pure state
