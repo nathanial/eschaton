@@ -178,13 +178,9 @@ def generateProvinces (config : ProvinceGenConfig)
       let name := provinceNames[i % provinceNames.size]!
       let color := provinceColors[i % provinceColors.size]!
 
-      let province : Widget.Province := {
-        id := i
-        name := name
-        polygon := polygon
-        fillColor := color
-        borderColor := Color.rgba 0.15 0.15 0.15 1.0
-      }
+      -- Use Province.create to pre-tessellate geometry at load time
+      let province := Widget.Province.create
+        i name polygon color (Color.rgba 0.15 0.15 0.15 1.0)
 
       provinces := provinces.push province
 
@@ -192,11 +188,13 @@ def generateProvinces (config : ProvinceGenConfig)
 
 /-- Quick province generation with default settings -/
 def generateDefaultProvinces (numProvinces : Nat := 24) (seed : Nat := 42) : Array Widget.Province :=
+  -- Scale minDistance inversely with sqrt of province count to maintain good spacing
+  let scaleFactor := Float.sqrt (24.0 / numProvinces.toFloat)
   generateProvinces {
     numProvinces := numProvinces
     seed := seed
     bounds := AABB2D.fromMinMax Vec2.zero Vec2.one
-    minDistance := 0.12
+    minDistance := 0.12 * scaleFactor
     edgeMargin := 0.03
   }
 

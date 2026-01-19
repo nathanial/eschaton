@@ -1,16 +1,18 @@
 /-
   Province Map Widget
   An EU4-style province map widget showing provinces as filled polygons.
-  Uses polygon rendering with solid fill colors and borders.
+  Uses pre-tessellated batched polygon rendering for high performance.
 -/
 import Afferent
 import Afferent.Arbor
+import Afferent.Render.Tessellation
 import Linalg
 import Tincture
 import Eschaton.Widget.ProvinceMap.State
 import Eschaton.Widget.ProvinceMap.HitTest
 
 open Afferent.Arbor
+open Afferent.Tessellation (TessellatedPolygon TessellatedBatch StrokeBatch tessellatePolygonForCache)
 open Tincture (Color)
 
 namespace Eschaton.Widget
@@ -26,19 +28,36 @@ private def brighten (color : Color) (amount : Float) : Color :=
     (clampMax (color.b + (1.0 - color.b) * amount) 1.0)
     color.a
 
-/-- A province in the map. -/
+/-- Convert Linalg.Vec2 array to Afferent.Point array. -/
+private def vec2ArrayToPoints (verts : Array Linalg.Vec2) : Array Afferent.Point :=
+  verts.map fun v => { x := v.x, y := v.y }
+
+/-- A province in the map with pre-tessellated geometry. -/
 structure Province where
   /-- Unique identifier for the province -/
   id : Nat
   /-- Display name for the province -/
   name : String
-  /-- Polygon vertices in normalized 0-1 coordinates -/
+  /-- Polygon vertices in normalized 0-1 coordinates (for hit testing) -/
   polygon : Linalg.Polygon2D
+  /-- Pre-tessellated polygon geometry (cached at load time) -/
+  tessellated : TessellatedPolygon
   /-- Fill color for the province -/
   fillColor : Color
   /-- Border color (defaults to dark gray) -/
   borderColor : Color := Color.rgba 0.2 0.2 0.2 1.0
   deriving Inhabited
+
+namespace Province
+
+/-- Create a province with pre-tessellated geometry. -/
+def create (id : Nat) (name : String) (polygon : Linalg.Polygon2D) (fillColor : Color)
+    (borderColor : Color := Color.rgba 0.2 0.2 0.2 1.0) : Province :=
+  let points := vec2ArrayToPoints polygon.vertices
+  let tessellated := tessellatePolygonForCache points
+  { id, name, polygon, tessellated, fillColor, borderColor }
+
+end Province
 
 /-- Static configuration for the province map (excludes view state). -/
 structure ProvinceMapStaticConfig where
@@ -54,7 +73,8 @@ structure ProvinceMapStaticConfig where
   labelColor : Color := Color.rgba 0.9 0.9 0.9 0.9
   deriving Inhabited
 
-/-- Province map widget spec using polygon rendering with reactive view state. -/
+/-- Province map widget spec using batched polygon rendering with reactive view state.
+    Uses pre-tessellated geometry for high performance (1-2 draw calls instead of ~4000). -/
 def provinceMapSpecWithState (staticConfig : ProvinceMapStaticConfig)
     (viewState : ProvinceMap.ProvinceMapViewState) : Afferent.Arbor.CustomSpec := {
   skipCache := false  -- No animation, can cache when state unchanged
@@ -65,13 +85,9 @@ def provinceMapSpecWithState (staticConfig : ProvinceMapStaticConfig)
     let centerX := rect.width / 2.0
     let centerY := rect.height / 2.0
 
-    -- Transform a normalized position (0-1) to screen coords with zoom and pan
-    let transformToScreen (normX normY : Float) : Float × Float :=
-      let baseX := normX * rect.width
-      let baseY := normY * rect.height
-      let screenX := centerX + (baseX - centerX) * viewState.zoom + viewState.panX
-      let screenY := centerY + (baseY - centerY) * viewState.zoom + viewState.panY
-      (screenX, screenY)
+    -- Screen dimensions for NDC conversion (use rect dimensions since we translate)
+    let screenWidth := rect.width
+    let screenHeight := rect.height
 
     Afferent.Arbor.RenderM.build do
       RenderM.pushTranslate rect.x rect.y
@@ -79,48 +95,60 @@ def provinceMapSpecWithState (staticConfig : ProvinceMapStaticConfig)
       -- Fill background (ocean color, not affected by pan/zoom)
       RenderM.fillRect' 0 0 rect.width rect.height staticConfig.backgroundColor
 
-      -- Draw province fills first
-      for i in [:staticConfig.provinces.size] do
-        if h : i < staticConfig.provinces.size then
-          let province := staticConfig.provinces[i]
-          let isHovered := viewState.hoveredProvince == some i
-          let isSelected := viewState.selectedProvince == some i
+      -- Build tessellated fill batch from all provinces
+      let fillBatch := Id.run do
+        let mut batch := TessellatedBatch.withCapacity staticConfig.provinces.size
+        for i in [:staticConfig.provinces.size] do
+          if h : i < staticConfig.provinces.size then
+            let province := staticConfig.provinces[i]
+            let isHovered := viewState.hoveredProvince == some i
+            let isSelected := viewState.selectedProvince == some i
 
-          -- Transform polygon vertices to screen space
-          let screenVerts := province.polygon.vertices.map fun v =>
-            let (sx, sy) := transformToScreen v.x v.y
-            Point.mk sx sy
+            -- Determine fill color based on hover/selection state
+            let fillColor :=
+              if isSelected then brighten province.fillColor 0.3
+              else if isHovered then brighten province.fillColor 0.15
+              else province.fillColor
 
-          -- Determine fill color based on hover/selection state
-          let fillColor :=
-            if isSelected then brighten province.fillColor 0.3
-            else if isHovered then brighten province.fillColor 0.15
-            else province.fillColor
+            -- Add province to batch with transform and color
+            batch := batch.addPolygon province.tessellated
+              viewState.panX viewState.panY viewState.zoom
+              centerX centerY rect.width rect.height
+              screenWidth screenHeight
+              (Afferent.Color.rgba fillColor.r fillColor.g fillColor.b fillColor.a)
+        batch
 
-          -- Fill polygon
-          RenderM.emit (.fillPolygon screenVerts fillColor)
+      -- Emit single draw call for all province fills
+      if !fillBatch.isEmpty then
+        RenderM.fillTessellatedBatch fillBatch.vertices fillBatch.indices fillBatch.vertexCount
 
-      -- Draw province borders (on top of fills for crisp edges)
-      for i in [:staticConfig.provinces.size] do
-        if h : i < staticConfig.provinces.size then
-          let province := staticConfig.provinces[i]
-          let isSelected := viewState.selectedProvince == some i
+      -- Build stroke batch from all province borders
+      let strokeBatch := Id.run do
+        let mut batch := StrokeBatch.withCapacity staticConfig.provinces.size
+        for i in [:staticConfig.provinces.size] do
+          if h : i < staticConfig.provinces.size then
+            let province := staticConfig.provinces[i]
+            -- Add province border to batch
+            batch := batch.addPolygonBorder province.tessellated
+              viewState.panX viewState.panY viewState.zoom
+              centerX centerY rect.width rect.height
+              (Afferent.Color.rgba province.borderColor.r province.borderColor.g province.borderColor.b province.borderColor.a)
+        batch
 
-          -- Transform polygon vertices to screen space
-          let screenVerts := province.polygon.vertices.map fun v =>
-            let (sx, sy) := transformToScreen v.x v.y
-            Point.mk sx sy
-
-          -- Double border width for selected provinces
-          let borderWidth :=
-            if isSelected then staticConfig.borderWidth * 2.0
-            else staticConfig.borderWidth
-
-          -- Stroke polygon border
-          RenderM.emit (.strokePolygon screenVerts province.borderColor borderWidth)
+      -- Emit single draw call for all province borders (using existing line batch)
+      if !strokeBatch.isEmpty then
+        RenderM.strokeLineBatch strokeBatch.data strokeBatch.lineCount staticConfig.borderWidth
 
       -- Draw labels if font provided (centered on province centroids)
       if let some font := staticConfig.labelFont then
+        -- Transform a normalized position (0-1) to screen coords with zoom and pan
+        let transformToScreen (normX normY : Float) : Float × Float :=
+          let baseX := normX * rect.width
+          let baseY := normY * rect.height
+          let screenX := centerX + (baseX - centerX) * viewState.zoom + viewState.panX
+          let screenY := centerY + (baseY - centerY) * viewState.zoom + viewState.panY
+          (screenX, screenY)
+
         for i in [:staticConfig.provinces.size] do
           if h : i < staticConfig.provinces.size then
             let province := staticConfig.provinces[i]
