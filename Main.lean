@@ -78,6 +78,12 @@ structure GameState where
   galaxyConfig : Widget.GalaxyConfig
   screenWidth : Float
   screenHeight : Float
+  -- Viewport panning state
+  panX : Float          -- viewport offset X (in pixels)
+  panY : Float          -- viewport offset Y (in pixels)
+  isDragging : Bool     -- true when left mouse held
+  lastMouseX : Float    -- for calculating drag delta
+  lastMouseY : Float
 
 def GameState.create (width height : Float) : IO GameState := do
   let now ← IO.monoMsNow
@@ -88,6 +94,11 @@ def GameState.create (width height : Float) : IO GameState := do
     galaxyConfig := sampleGalaxyConfig
     screenWidth := width
     screenHeight := height
+    panX := 0.0
+    panY := 0.0
+    isDragging := false
+    lastMouseX := 0.0
+    lastMouseY := 0.0
   }
 
 end Eschaton
@@ -214,8 +225,41 @@ def main : IO Unit := do
           CanvasM.fillTextColor promptText ⟨promptX, promptY⟩ debugFont (Color.rgba 0.6 0.6 0.7 promptAlpha)
 
       | .galaxy =>
+        -- Handle mouse drag for panning
+        let (mouseX, mouseY) ← canvas.ctx.window.getMousePos
+        let buttons ← canvas.ctx.window.getMouseButtons
+        let leftDown := buttons &&& 1 != 0
+
+        if leftDown then
+          if state.isDragging then
+            -- Continue drag: update pan by delta
+            let dx := mouseX - state.lastMouseX
+            let dy := mouseY - state.lastMouseY
+            state := { state with
+              panX := state.panX + dx
+              panY := state.panY + dy
+              lastMouseX := mouseX
+              lastMouseY := mouseY
+            }
+          else
+            -- Start drag
+            state := { state with
+              isDragging := true
+              lastMouseX := mouseX
+              lastMouseY := mouseY
+            }
+        else
+          -- End drag
+          if state.isDragging then
+            state := { state with isDragging := false }
+
         -- Galaxy screen: show galaxy widget with animated stars
-        let galaxyConfig := { state.galaxyConfig with labelFont := some _debugFontId, time := t }
+        let galaxyConfig := { state.galaxyConfig with
+          labelFont := some _debugFontId
+          time := t
+          panX := state.panX
+          panY := state.panY
+        }
         let galaxyBuilder := Eschaton.Widget.galaxyWidget galaxyConfig
         let galaxyWidgetTree := Afferent.Arbor.buildFrom 2 galaxyBuilder
 

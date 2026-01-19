@@ -40,6 +40,8 @@ structure GalaxyConfig where
   labelFont : Option FontId := none
   labelColor : Color := Tincture.Color.rgba 0.7 0.7 0.8 0.8
   time : Float := 0.0  -- Animation time in seconds
+  panX : Float := 0.0  -- Viewport pan offset X (in pixels)
+  panY : Float := 0.0  -- Viewport pan offset Y (in pixels)
   deriving Inhabited
 
 /-- Galaxy widget spec using GPU shader-based star rendering. -/
@@ -52,29 +54,29 @@ def galaxySpec (config : GalaxyConfig) : Afferent.Arbor.CustomSpec := {
     Afferent.Arbor.RenderM.build do
       RenderM.pushTranslate rect.x rect.y
 
-      -- Fill background
+      -- Fill background (stays fixed, not affected by pan)
       RenderM.fillRect' 0 0 rect.width rect.height config.backgroundColor
 
-      -- Draw hyperlanes
+      -- Draw hyperlanes (apply pan offset directly to coordinates)
       for lane in config.hyperlanes do
         if h₁ : lane.source < config.systems.size then
           if h₂ : lane.target < config.systems.size then
             let sourceSys := config.systems[lane.source]
             let targetSys := config.systems[lane.target]
-            let x1 := sourceSys.x * rect.width
-            let y1 := sourceSys.y * rect.height
-            let x2 := targetSys.x * rect.width
-            let y2 := targetSys.y * rect.height
+            let x1 := sourceSys.x * rect.width + config.panX
+            let y1 := sourceSys.y * rect.height + config.panY
+            let x2 := targetSys.x * rect.width + config.panX
+            let y2 := targetSys.y * rect.height + config.panY
             RenderM.emit (.strokeLine ⟨x1, y1⟩ ⟨x2, y2⟩ config.hyperlaneColor config.hyperlaneWidth)
 
-      -- Draw star systems using GPU shader (glow layers first, then cores)
+      -- Draw star systems using GPU shader (apply pan offset directly)
       for sys in config.systems do
-        let cx := sys.x * rect.width
-        let cy := sys.y * rect.height
+        let cx := sys.x * rect.width + config.panX
+        let cy := sys.y * rect.height + config.panY
 
         -- 8 floats: center(2), size(1), time(1), color(4)
         let params : Array Float := #[
-          cx, cy,                                       -- center
+          cx, cy,                                       -- center (with pan applied)
           sys.size,                                     -- size
           config.time,                                  -- time (raw seconds)
           sys.color.r, sys.color.g, sys.color.b, sys.color.a  -- color
@@ -83,16 +85,16 @@ def galaxySpec (config : GalaxyConfig) : Afferent.Arbor.CustomSpec := {
         RenderM.drawFragment starFragment.hash starFragment.primitive.toUInt32
           params starFragment.instanceCount.toUInt32
 
-      -- Draw labels if font provided
+      -- Draw labels if font provided (apply pan offset directly)
       if let some font := config.labelFont then
         for sys in config.systems do
-          let cx := sys.x * rect.width
-          let cy := sys.y * rect.height
+          let cx := sys.x * rect.width + config.panX
+          let cy := sys.y * rect.height + config.panY
           -- Position label below the star (account for glow radius)
           let labelY := cy + sys.size * 0.9 + 12
           RenderM.fillText sys.name cx labelY font config.labelColor
 
-      RenderM.popTransform
+      RenderM.popTransform  -- pop rect translate
   draw := none
 }
 
