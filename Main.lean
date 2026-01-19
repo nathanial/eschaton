@@ -1,14 +1,22 @@
 /-
   Eschaton - A Stellaris-inspired grand strategy game
-  Main entry point with window setup and game loop
+  Main entry point with window setup and FRP-based reactive game loop
 -/
 import Afferent
 import Afferent.Arbor
 import Afferent.Widget
+import Afferent.Canopy
 import Eschaton
+import Reactive
 
 open Afferent Afferent.FFI
+open Afferent.Canopy
+open Afferent.Canopy.Reactive
+open Reactive Reactive.Host Reactive.Host.Spider
 open Linalg
+open Eschaton.Widget (StarfieldConfig starfieldWidget GalaxyStaticConfig galaxySpecWithState
+  StarSystem Hyperlane toStarHitInfoArray)
+open Eschaton.Widget.Galaxy (GalaxyViewState reactiveGalaxy)
 
 namespace Eschaton
 
@@ -24,7 +32,7 @@ private def hash (n : Float) : Float :=
   x - x.floor
 
 /-- Generate a procedural star system from an index. -/
-private def generateStar (idx : Nat) : Widget.StarSystem :=
+private def generateStar (idx : Nat) : StarSystem :=
   let i := idx.toFloat
   -- Position with some clustering
   let angle := hash (i * 1.1) * 2.0 * Float.pi
@@ -42,8 +50,8 @@ private def generateStar (idx : Nat) : Widget.StarSystem :=
   { name := s!"Star-{idx}", x := x, y := y, color := Color.rgb r g b, size := size }
 
 /-- Generate hyperlanes connecting nearby stars. -/
-private def generateHyperlanes (systems : Array Widget.StarSystem) : Array Widget.Hyperlane := Id.run do
-  let mut lanes : Array Widget.Hyperlane := #[]
+private def generateHyperlanes (systems : Array StarSystem) : Array Hyperlane := Id.run do
+  let mut lanes : Array Hyperlane := #[]
   for i in [:systems.size] do
     if h₁ : i < systems.size then
       let s1 := systems[i]
@@ -59,7 +67,7 @@ private def generateHyperlanes (systems : Array Widget.StarSystem) : Array Widge
   lanes
 
 /-- Sample galaxy configuration with 400 procedurally generated star systems. -/
-def sampleGalaxyConfig : Widget.GalaxyConfig :=
+def sampleGalaxyConfig : GalaxyStaticConfig :=
   let systems := Array.ofFn (n := 400) (generateStar ·.val)
   let hyperlanes := generateHyperlanes systems
   {
@@ -70,46 +78,12 @@ def sampleGalaxyConfig : Widget.GalaxyConfig :=
     hyperlaneWidth := 1.0
   }
 
-/-- Game state. -/
-structure GameState where
-  lastTime : Nat
-  screen : Screen
-  starfieldConfig : Widget.StarfieldConfig
-  galaxyConfig : Widget.GalaxyConfig
-  screenWidth : Float
-  screenHeight : Float
-  -- Viewport panning state
-  panX : Float          -- viewport offset X (in pixels)
-  panY : Float          -- viewport offset Y (in pixels)
-  isDragging : Bool     -- true when left mouse held
-  lastMouseX : Float    -- for calculating drag delta
-  lastMouseY : Float
-  -- Zoom state
-  zoom : Float          -- zoom level (1.0 = 100%)
-
-def GameState.create (width height : Float) : IO GameState := do
-  let now ← IO.monoMsNow
-  pure {
-    lastTime := now
-    screen := .title
-    starfieldConfig := {}
-    galaxyConfig := sampleGalaxyConfig
-    screenWidth := width
-    screenHeight := height
-    panX := 0.0
-    panY := 0.0
-    isDragging := false
-    lastMouseX := 0.0
-    lastMouseY := 0.0
-    zoom := 1.0
-  }
-
 end Eschaton
 
 def main : IO Unit := do
   IO.println "Eschaton"
   IO.println "========"
-  IO.println "A grand strategy game"
+  IO.println "A grand strategy game (FRP-based reactive rendering)"
   IO.println ""
 
   -- Initialize FFI
@@ -136,34 +110,62 @@ def main : IO Unit := do
   let debugFont ← Afferent.Font.load "/System/Library/Fonts/Monaco.ttf" (14 * screenScale).toUInt32
 
   -- Create font registry for Arbor
-  let (fontRegistry, _debugFontId) := FontRegistry.empty.register debugFont "debug"
+  let (fontRegistry, debugFontId) := FontRegistry.empty.register debugFont "debug"
 
-  -- Initialize game state
+  -- Game configuration
   let physWidthF := baseWidth * screenScale
   let physHeightF := baseHeight * screenScale
-  let mut state ← Eschaton.GameState.create physWidthF physHeightF
+  let galaxyConfig := { Eschaton.sampleGalaxyConfig with labelFont := some debugFontId }
+  let hitInfos := toStarHitInfoArray galaxyConfig.systems
 
+  -- Initialize FRP environment
+  let spiderEnv ← SpiderEnv.new defaultErrorHandler
   let startTime ← IO.monoMsNow
   let mut frameCount : Nat := 0
   let mut displayFps : Float := 0.0
   let mut fpsAccumulator : Float := 0.0
+  let mut lastTime := startTime
+
+  -- Screen state (not in FRP - simple state machine for title/galaxy transition)
+  let mut currentScreen : Eschaton.Screen := .title
+
+  -- Starfield config for title screen
+  let starfieldConfig : StarfieldConfig := {}
+
+  -- Track mouse button state for click/mouseup (manual since Window doesn't have this built-in)
+  let prevLeftDown ← IO.mkRef false
+
+  -- Run the FRP setup to create the reactive galaxy widget
+  let ((galaxyResult, galaxyRender), inputs) ← (do
+    let (events, inputs) ← createInputs
+    let result ← ReactiveM.run events do
+      runWidget do
+        -- Use elapsed time from the reactive system
+        let time ← useElapsedTime
+
+        -- Create the render spec function that captures galaxyConfig
+        let renderSpec := fun (viewState : GalaxyViewState) (t : Float) =>
+          galaxySpecWithState galaxyConfig viewState t
+
+        reactiveGalaxy hitInfos time renderSpec
+    pure (result, inputs)
+  ).run spiderEnv
 
   -- Main game loop
   while !(← canvas.shouldClose) do
     canvas.pollEvents
 
-    -- Handle input
+    -- Handle input for screen transitions
     if ← canvas.hasKeyPressed then
       canvas.clearKey
-      -- Transition from title to galaxy on any key press
-      if state.screen == .title then
-        state := { state with screen := .galaxy }
+      if currentScreen == .title then
+        currentScreen := .galaxy
 
     -- Calculate delta time
     let now ← IO.monoMsNow
-    let dt := (now - state.lastTime).toFloat / 1000.0
+    let dt := (now - lastTime).toFloat / 1000.0
     let t := (now - startTime).toFloat / 1000.0
-    state := { state with lastTime := now }
+    lastTime := now
 
     -- FPS calculation
     frameCount := frameCount + 1
@@ -181,11 +183,10 @@ def main : IO Unit := do
       -- Get current window size
       let (currentW, currentH) ← canvas.ctx.getCurrentSize
 
-      -- Screen-specific rendering
-      match state.screen with
+      match currentScreen with
       | .title =>
         -- Build the starfield widget (GPU shader-based)
-        let starfieldBuilder := Eschaton.Widget.starfieldWidget state.starfieldConfig t
+        let starfieldBuilder := Eschaton.Widget.starfieldWidget starfieldConfig t
         let starfieldWidget := Afferent.Arbor.buildFrom 1 starfieldBuilder
 
         -- Measure and layout the widget to fill the screen
@@ -193,11 +194,11 @@ def main : IO Unit := do
           (Afferent.Arbor.measureWidget starfieldWidget currentW currentH)
         let layouts := Trellis.layout measureResult.node currentW currentH
 
-        -- Collect render commands (none for starfield since it uses custom draw)
-        let (commands, _cacheHits, _cacheMisses) ←
+        -- Collect render commands
+        let (commands, _, _) ←
           Afferent.Arbor.collectCommandsCachedWithStats canvas.renderCache measureResult.widget layouts
 
-        -- Execute commands and render custom widgets (starfield)
+        -- Execute commands and render custom widgets
         canvas ← CanvasM.run' canvas do
           Afferent.Widget.executeCommandsBatched fontRegistry commands
           Afferent.Widget.renderCustomWidgets measureResult.widget layouts
@@ -228,71 +229,72 @@ def main : IO Unit := do
           CanvasM.fillTextColor promptText ⟨promptX, promptY⟩ debugFont (Color.rgba 0.6 0.6 0.7 promptAlpha)
 
       | .galaxy =>
-        -- Handle mouse drag for panning
-        let (mouseX, mouseY) ← canvas.ctx.window.getMousePos
-        let buttons ← canvas.ctx.window.getMouseButtons
-        let leftDown := buttons &&& 1 != 0
+        -- Fire animation frame event to update time
+        inputs.fireAnimationFrame dt
 
-        if leftDown then
-          if state.isDragging then
-            -- Continue drag: update pan by delta
-            let dx := mouseX - state.lastMouseX
-            let dy := mouseY - state.lastMouseY
-            state := { state with
-              panX := state.panX + dx
-              panY := state.panY + dy
-              lastMouseX := mouseX
-              lastMouseY := mouseY
-            }
-          else
-            -- Start drag
-            state := { state with
-              isDragging := true
-              lastMouseX := mouseX
-              lastMouseY := mouseY
-            }
-        else
-          -- End drag
-          if state.isDragging then
-            state := { state with isDragging := false }
-
-        -- Handle scroll wheel for zooming
-        let (_, scrollY) ← canvas.ctx.window.getScrollDelta
-        if scrollY != 0.0 then
-          -- Zoom factor: scroll up = zoom in, scroll down = zoom out
-          let zoomFactor := 1.0 + scrollY * 0.1
-          let newZoom := (state.zoom * zoomFactor).max 0.1 |>.min 10.0  -- Clamp between 0.1x and 10x
-
-          -- Zoom towards mouse position
-          let centerX := currentW / 2.0
-          let centerY := currentH / 2.0
-          -- Adjust pan so the point under the mouse stays fixed
-          let scale := newZoom / state.zoom
-          let newPanX := mouseX - centerX - (mouseX - centerX - state.panX) * scale
-          let newPanY := mouseY - centerY - (mouseY - centerY - state.panY) * scale
-
-          state := { state with
-            zoom := newZoom
-            panX := newPanX
-            panY := newPanY
-          }
-          canvas.ctx.window.clearScroll
-
-        -- Galaxy screen: show galaxy widget with animated stars
-        let galaxyConfig := { state.galaxyConfig with
-          labelFont := some _debugFontId
-          time := t
-          panX := state.panX
-          panY := state.panY
-          zoom := state.zoom
-        }
-        let galaxyBuilder := Eschaton.Widget.galaxyWidget galaxyConfig
+        -- Build the galaxy widget from the reactive render function
+        let galaxyBuilder ← galaxyRender
         let galaxyWidgetTree := Afferent.Arbor.buildFrom 2 galaxyBuilder
 
         -- Measure and layout the galaxy widget
         let galaxyMeasure ← runWithFonts fontRegistry
           (Afferent.Arbor.measureWidget galaxyWidgetTree currentW currentH)
         let galaxyLayouts := Trellis.layout galaxyMeasure.node currentW currentH
+
+        -- Build the name map for hit testing
+        let nameMap := buildNameMap galaxyMeasure.widget
+
+        -- Get mouse state for hover/click events
+        let (mouseX, mouseY) ← canvas.ctx.window.getMousePos
+        let buttons ← canvas.ctx.window.getMouseButtons
+        let leftDown := buttons &&& 1 != 0
+
+        -- Fire hover event
+        let hitPath := Afferent.Arbor.hitTestPath galaxyMeasure.widget galaxyLayouts mouseX mouseY
+        inputs.fireHover {
+          x := mouseX
+          y := mouseY
+          hitPath := hitPath
+          widget := galaxyMeasure.widget
+          layouts := galaxyLayouts
+          nameMap := nameMap
+        }
+
+        -- Track mouse button state for click/mouseup events
+        let wasLeftDown ← prevLeftDown.get
+        if leftDown && !wasLeftDown then
+          -- Mouse down - fire click
+          inputs.fireClick {
+            click := { button := 0, x := mouseX, y := mouseY, modifiers := 0 }
+            hitPath := hitPath
+            widget := galaxyMeasure.widget
+            layouts := galaxyLayouts
+            nameMap := nameMap
+          }
+        if !leftDown && wasLeftDown then
+          -- Mouse up
+          inputs.fireMouseUp {
+            x := mouseX
+            y := mouseY
+            button := 0
+            hitPath := hitPath
+            widget := galaxyMeasure.widget
+            layouts := galaxyLayouts
+            nameMap := nameMap
+          }
+        prevLeftDown.set leftDown
+
+        -- Handle scroll for zoom
+        let (_, scrollY) ← canvas.ctx.window.getScrollDelta
+        if scrollY != 0.0 then
+          inputs.fireScroll {
+            scroll := { x := mouseX, y := mouseY, deltaX := 0.0, deltaY := scrollY }
+            hitPath := hitPath
+            widget := galaxyMeasure.widget
+            layouts := galaxyLayouts
+            nameMap := nameMap
+          }
+          canvas.ctx.window.clearScroll
 
         -- Collect and execute galaxy render commands
         let (galaxyCommands, _, _) ←
