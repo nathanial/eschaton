@@ -1,7 +1,7 @@
 /-
   Star Widget
-  GPU shader-based star rendering with bright core and glowing corona effect.
-  Uses the Shader DSL to generate Metal shader code.
+  GPU shader-based star rendering with bright core and smooth radial glow.
+  Uses the QuadShader DSL to render per-pixel gradients in the fragment shader.
 -/
 import Afferent
 import Afferent.Arbor
@@ -20,41 +20,46 @@ private def pSize : ShaderExpr .float := param "size" .float
 private def pTime : ShaderExpr .float := param "time" .float
 private def pColor : ShaderExpr .float4 := param "color" .float4
 
-/-- Star shader definition using the DSL.
-    Computes 5 circles: bright core (idx 0) + 4 glow layers (idx 1-4).
+/-- Star shader definition using QuadShader for smooth per-pixel radial glow.
+    Unlike the previous CircleShader with 5 discrete circles, this renders
+    a smooth gradient in the fragment shader for each pixel.
     Parameters: center(2), size(1), time(1), color(4) = 8 floats. -/
-def starShader : CircleShader := {
+def starShader : QuadShader := {
   name := "star"
-  instanceCount := 5
+  instanceCount := 1
   params := [
     ⟨"center", .float2⟩,
     ⟨"size", .float⟩,
     ⟨"time", .float⟩,
     ⟨"color", .float4⟩
   ]
-  body :=
-    let isCore := eqU idx 0
+  -- Vertex shader: compute quad bounds (runs once per instance)
+  vertex := {
+    position := pCenter - vec2 pSize pSize
+    size := vec2 (pSize * 2.0) (pSize * 2.0)
+  }
+  -- Fragment shader: compute per-pixel color with radial gradient (runs once per pixel)
+  pixel :=
+    -- Distance from center (0 at center, 1 at edge of quad)
+    let dist := radialDistance
 
-    -- Layer radii: core is 0.15x, glows are 0.3x, 0.5x, 0.7x, 0.9x of size
-    let radiusFactor := cond isCore 0.15
-      (cond (eqU idx 1) 0.3
-      (cond (eqU idx 2) 0.5
-      (cond (eqU idx 3) 0.7 0.9)))
+    -- Bright core: very bright near center, drops off quickly
+    let coreIntensity := 1.0 - smoothstep 0.0 0.15 dist
 
-    -- Alpha: core is 1.0, glows fade outward (0.4, 0.25, 0.15, 0.08)
-    let baseAlpha := cond isCore 1.0
-      (cond (eqU idx 1) 0.4
-      (cond (eqU idx 2) 0.25
-      (cond (eqU idx 3) 0.15 0.08)))
+    -- Soft glow: gradual falloff from center to edge
+    let glowIntensity := 1.0 - smoothstep 0.0 1.0 dist
 
-    -- Pulse: subtle brightness oscillation using sin(time)
+    -- Combine: core adds bright center on top of overall glow
+    let combined := glowIntensity * 0.5 + coreIntensity * 0.5
+
+    -- Pulse: subtle brightness oscillation
     let pulse := 0.85 + 0.15 * sin (pTime * twoPi * 0.5)
-    let finalAlpha := baseAlpha * pulse * pColor.w
+
+    -- Final alpha with smooth circular mask
+    let circularMask := 1.0 - smoothstep 0.9 1.0 dist
+    let finalAlpha := combined * pulse * pColor.w * circularMask
 
     {
-      center := pCenter
-      radius := pSize * radiusFactor
-      strokeWidth := .litFloat 0.0  -- filled circles
       color := vec4 pColor.x pColor.y pColor.z finalAlpha
     }
 }
