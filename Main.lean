@@ -18,39 +18,57 @@ inductive Screen where
   | galaxy
   deriving BEq, Inhabited
 
-/-- Sample galaxy configuration with 6 star systems.
-    Layout (normalized coordinates):
-    ```
-    Sol -------- Alpha Centauri
-      \              |
-       \             |
-        Sirius ----- Vega
-          |           \
-          |            \
-        Rigel ------- Betelgeuse
-    ``` -/
-def sampleGalaxyConfig : Widget.GalaxyConfig := {
-  systems := #[
-    { name := "Sol", x := 0.25, y := 0.25, color := Color.rgb 1.0 0.95 0.7, size := 80 },
-    { name := "Alpha Centauri", x := 0.70, y := 0.20, color := Color.rgb 1.0 0.8 0.4, size := 60 },
-    { name := "Sirius", x := 0.35, y := 0.50, color := Color.rgb 0.7 0.8 1.0, size := 100 },
-    { name := "Vega", x := 0.65, y := 0.45, color := Color.rgb 0.9 0.9 1.0, size := 70 },
-    { name := "Rigel", x := 0.30, y := 0.75, color := Color.rgb 0.6 0.7 1.0, size := 90 },
-    { name := "Betelgeuse", x := 0.72, y := 0.70, color := Color.rgb 1.0 0.5 0.3, size := 120 }
-  ]
-  hyperlanes := #[
-    { source := 0, target := 1 },  -- Sol - Alpha Centauri
-    { source := 0, target := 2 },  -- Sol - Sirius
-    { source := 1, target := 3 },  -- Alpha Centauri - Vega
-    { source := 2, target := 3 },  -- Sirius - Vega
-    { source := 2, target := 4 },  -- Sirius - Rigel
-    { source := 3, target := 5 },  -- Vega - Betelgeuse
-    { source := 4, target := 5 }   -- Rigel - Betelgeuse
-  ]
-  backgroundColor := Color.rgb 0.02 0.02 0.05  -- Dark space background
-  hyperlaneColor := Color.rgba 0.4 0.5 0.7 0.4
-  hyperlaneWidth := 2.0
-}
+/-- Simple hash function for pseudo-random generation. -/
+private def hash (n : Float) : Float :=
+  let x := Float.sin (n * 12.9898 + 78.233) * 43758.5453
+  x - x.floor
+
+/-- Generate a procedural star system from an index. -/
+private def generateStar (idx : Nat) : Widget.StarSystem :=
+  let i := idx.toFloat
+  -- Position with some clustering
+  let angle := hash (i * 1.1) * 2.0 * Float.pi
+  let radius := 0.1 + hash (i * 2.3) * 0.35
+  let x := 0.5 + radius * Float.cos angle
+  let y := 0.5 + radius * Float.sin angle
+  -- Color temperature (blue to red)
+  let temp := hash (i * 3.7)
+  let (r, g, b) := if temp < 0.2 then (0.6, 0.7, 1.0)      -- Blue
+                   else if temp < 0.5 then (0.9, 0.9, 1.0) -- White
+                   else if temp < 0.8 then (1.0, 0.95, 0.7) -- Yellow
+                   else (1.0, 0.6, 0.4)                     -- Orange/Red
+  -- Size variation
+  let size := 8.0 + hash (i * 5.1) * 16.0
+  { name := s!"Star-{idx}", x := x, y := y, color := Color.rgb r g b, size := size }
+
+/-- Generate hyperlanes connecting nearby stars. -/
+private def generateHyperlanes (systems : Array Widget.StarSystem) : Array Widget.Hyperlane := Id.run do
+  let mut lanes : Array Widget.Hyperlane := #[]
+  for i in [:systems.size] do
+    if h₁ : i < systems.size then
+      let s1 := systems[i]
+      for j in [i+1:systems.size] do
+        if h₂ : j < systems.size then
+          let s2 := systems[j]
+          let dx := s1.x - s2.x
+          let dy := s1.y - s2.y
+          let dist := Float.sqrt (dx * dx + dy * dy)
+          -- Connect stars within a threshold distance
+          if dist < 0.08 then
+            lanes := lanes.push { source := i, target := j }
+  lanes
+
+/-- Sample galaxy configuration with 400 procedurally generated star systems. -/
+def sampleGalaxyConfig : Widget.GalaxyConfig :=
+  let systems := Array.ofFn (n := 400) (generateStar ·.val)
+  let hyperlanes := generateHyperlanes systems
+  {
+    systems := systems
+    hyperlanes := hyperlanes
+    backgroundColor := Color.rgb 0.02 0.02 0.05  -- Dark space background
+    hyperlaneColor := Color.rgba 0.4 0.5 0.7 0.3
+    hyperlaneWidth := 1.0
+  }
 
 /-- Game state. -/
 structure GameState where
