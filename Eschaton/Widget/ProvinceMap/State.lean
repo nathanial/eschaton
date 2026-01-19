@@ -1,22 +1,22 @@
 /-
-  Galaxy State Management
-  View state and input events for the reactive galaxy widget.
+  Province Map State Management
+  View state and input events for the reactive province map widget.
 -/
-namespace Eschaton.Widget.Galaxy
+namespace Eschaton.Widget.ProvinceMap
 
-/-- View state for the galaxy widget.
+/-- View state for the province map widget.
     Tracks pan, zoom, and interaction state reactively. -/
-structure GalaxyViewState where
+structure ProvinceMapViewState where
   /-- Viewport pan offset X in pixels -/
   panX : Float := 0.0
   /-- Viewport pan offset Y in pixels -/
   panY : Float := 0.0
   /-- Zoom level (1.0 = 100%) -/
   zoom : Float := 1.0
-  /-- Index of the currently hovered star, if any -/
-  hoveredStar : Option Nat := none
-  /-- Index of the currently selected star, if any -/
-  selectedStar : Option Nat := none
+  /-- Index of the currently hovered province, if any -/
+  hoveredProvince : Option Nat := none
+  /-- Index of the currently selected province, if any -/
+  selectedProvince : Option Nat := none
   /-- True when the user is dragging to pan -/
   isDragging : Bool := false
   /-- Mouse X position when drag started -/
@@ -29,8 +29,8 @@ structure GalaxyViewState where
   dragStartPanY : Float := 0.0
   deriving Inhabited, BEq
 
-/-- Input events that can modify the galaxy view state. -/
-inductive GalaxyInput where
+/-- Input events that can modify the province map view state. -/
+inductive ProvinceMapInput where
   /-- Start a pan drag at the given screen coordinates -/
   | panStart (x y : Float)
   /-- Continue panning to the given screen coordinates -/
@@ -39,16 +39,16 @@ inductive GalaxyInput where
   | panEnd
   /-- Zoom by the given delta, anchored at the given screen coordinates -/
   | zoom (delta : Float) (anchorX anchorY : Float)
-  /-- Update the hovered star index -/
-  | hoverStar (idx : Option Nat)
-  /-- Select a star by index -/
-  | selectStar (idx : Nat)
-  /-- Deselect the current star -/
-  | deselectStar
+  /-- Update the hovered province index -/
+  | hoverProvince (idx : Option Nat)
+  /-- Select a province by index -/
+  | selectProvince (idx : Nat)
+  /-- Deselect the current province -/
+  | deselectProvince
   deriving Inhabited, BEq
 
 /-- Apply an input event to the view state to produce the new state. -/
-def applyInput (input : GalaxyInput) (state : GalaxyViewState) : GalaxyViewState :=
+def applyInput (input : ProvinceMapInput) (state : ProvinceMapViewState) : ProvinceMapViewState :=
   match input with
   | .panStart x y =>
     { state with
@@ -87,11 +87,11 @@ def applyInput (input : GalaxyInput) (state : GalaxyViewState) : GalaxyViewState
       panX := newPanX
       panY := newPanY
     }
-  | .hoverStar idx =>
-    { state with hoveredStar := idx }
-  | .selectStar idx =>
-    { state with selectedStar := some idx }
-  | .deselectStar =>
-    { state with selectedStar := none }
+  | .hoverProvince idx =>
+    { state with hoveredProvince := idx }
+  | .selectProvince idx =>
+    { state with selectedProvince := some idx }
+  | .deselectProvince =>
+    { state with selectedProvince := none }
 
-end Eschaton.Widget.Galaxy
+end Eschaton.Widget.ProvinceMap

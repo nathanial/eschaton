@@ -8,6 +8,7 @@ package «eschaton» where
 
 -- Local import for development
 require afferent from "../../graphics/afferent"
+require linalg from "../../math/linalg"
 
 @[default_target]
 lean_lib «Eschaton» where

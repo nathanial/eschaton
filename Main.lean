@@ -14,9 +14,9 @@ open Afferent.Canopy
 open Afferent.Canopy.Reactive
 open Reactive Reactive.Host Reactive.Host.Spider
 open Linalg
-open Eschaton.Widget (StarfieldConfig starfieldWidget GalaxyStaticConfig galaxySpecWithState
-  StarSystem Hyperlane toStarHitInfoArray)
-open Eschaton.Widget.Galaxy (GalaxyViewState reactiveGalaxy)
+open Eschaton.Widget (StarfieldConfig starfieldWidget ProvinceMapStaticConfig provinceMapSpecWithState
+  Province toProvinceHitInfoArray)
+open Eschaton.Widget.ProvinceMap (ProvinceMapViewState reactiveProvinceMap)
 
 namespace Eschaton
 
@@ -26,56 +26,14 @@ inductive Screen where
   | galaxy
   deriving BEq, Inhabited
 
-/-- Simple hash function for pseudo-random generation. -/
-private def hash (n : Float) : Float :=
-  let x := Float.sin (n * 12.9898 + 78.233) * 43758.5453
-  x - x.floor
-
-/-- Generate a procedural star system from an index. -/
-private def generateStar (idx : Nat) : StarSystem :=
-  let i := idx.toFloat
-  -- Position with some clustering
-  let angle := hash (i * 1.1) * 2.0 * Float.pi
-  let radius := 0.1 + hash (i * 2.3) * 0.35
-  let x := 0.5 + radius * Float.cos angle
-  let y := 0.5 + radius * Float.sin angle
-  -- Color temperature (blue to red)
-  let temp := hash (i * 3.7)
-  let (r, g, b) := if temp < 0.2 then (0.6, 0.7, 1.0)      -- Blue
-                   else if temp < 0.5 then (0.9, 0.9, 1.0) -- White
-                   else if temp < 0.8 then (1.0, 0.95, 0.7) -- Yellow
-                   else (1.0, 0.6, 0.4)                     -- Orange/Red
-  -- Size variation
-  let size := 8.0 + hash (i * 5.1) * 16.0
-  { name := s!"Star-{idx}", x := x, y := y, color := Color.rgb r g b, size := size }
-
-/-- Generate hyperlanes connecting nearby stars. -/
-private def generateHyperlanes (systems : Array StarSystem) : Array Hyperlane := Id.run do
-  let mut lanes : Array Hyperlane := #[]
-  for i in [:systems.size] do
-    if h₁ : i < systems.size then
-      let s1 := systems[i]
-      for j in [i+1:systems.size] do
-        if h₂ : j < systems.size then
-          let s2 := systems[j]
-          let dx := s1.x - s2.x
-          let dy := s1.y - s2.y
-          let dist := Float.sqrt (dx * dx + dy * dy)
-          -- Connect stars within a threshold distance
-          if dist < 0.08 then
-            lanes := lanes.push { source := i, target := j }
-  lanes
-
-/-- Sample galaxy configuration with 400 procedurally generated star systems. -/
-def sampleGalaxyConfig : GalaxyStaticConfig :=
-  let systems := Array.ofFn (n := 400) (generateStar ·.val)
-  let hyperlanes := generateHyperlanes systems
+/-- Generate provinces using Voronoi tessellation for perfect tiling. -/
+def sampleProvinceMapConfig : ProvinceMapStaticConfig :=
+  -- Generate 24 provinces with Voronoi tessellation
+  let provinces := generateDefaultProvinces 24 42
   {
-    systems := systems
-    hyperlanes := hyperlanes
-    backgroundColor := Color.rgb 0.02 0.02 0.05  -- Dark space background
-    hyperlaneColor := Color.rgba 0.4 0.5 0.7 0.3
-    hyperlaneWidth := 1.0
+    provinces := provinces
+    backgroundColor := Color.rgb 0.15 0.2 0.3  -- Ocean blue
+    borderWidth := 1.5
   }
 
 end Eschaton
@@ -113,10 +71,8 @@ def main : IO Unit := do
   let (fontRegistry, debugFontId) := FontRegistry.empty.register debugFont "debug"
 
   -- Game configuration
-  let physWidthF := baseWidth * screenScale
-  let physHeightF := baseHeight * screenScale
-  let galaxyConfig := { Eschaton.sampleGalaxyConfig with labelFont := some debugFontId }
-  let hitInfos := toStarHitInfoArray galaxyConfig.systems
+  let provinceMapConfig := { Eschaton.sampleProvinceMapConfig with labelFont := some debugFontId }
+  let hitInfos := toProvinceHitInfoArray provinceMapConfig.provinces
 
   -- Initialize FRP environment
   let spiderEnv ← SpiderEnv.new defaultErrorHandler
@@ -135,19 +91,16 @@ def main : IO Unit := do
   -- Track mouse button state for click/mouseup (manual since Window doesn't have this built-in)
   let prevLeftDown ← IO.mkRef false
 
-  -- Run the FRP setup to create the reactive galaxy widget
-  let ((galaxyResult, galaxyRender), inputs) ← (do
+  -- Run the FRP setup to create the reactive province map widget
+  let ((_provinceMapResult, provinceMapRender), inputs) ← (do
     let (events, inputs) ← createInputs
     let result ← ReactiveM.run events do
       runWidget do
-        -- Use elapsed time from the reactive system
-        let time ← useElapsedTime
+        -- Create the render spec function that captures provinceMapConfig
+        let renderSpec := fun (viewState : ProvinceMapViewState) =>
+          provinceMapSpecWithState provinceMapConfig viewState
 
-        -- Create the render spec function that captures galaxyConfig
-        let renderSpec := fun (viewState : GalaxyViewState) (t : Float) =>
-          galaxySpecWithState galaxyConfig viewState t
-
-        reactiveGalaxy hitInfos time renderSpec
+        reactiveProvinceMap hitInfos renderSpec
     pure (result, inputs)
   ).run spiderEnv
 
@@ -232,17 +185,17 @@ def main : IO Unit := do
         -- Fire animation frame event to update time
         inputs.fireAnimationFrame dt
 
-        -- Build the galaxy widget from the reactive render function
-        let galaxyBuilder ← galaxyRender
-        let galaxyWidgetTree := Afferent.Arbor.buildFrom 2 galaxyBuilder
+        -- Build the province map widget from the reactive render function
+        let provinceMapBuilder ← provinceMapRender
+        let provinceMapWidgetTree := Afferent.Arbor.buildFrom 2 provinceMapBuilder
 
-        -- Measure and layout the galaxy widget
-        let galaxyMeasure ← runWithFonts fontRegistry
-          (Afferent.Arbor.measureWidget galaxyWidgetTree currentW currentH)
-        let galaxyLayouts := Trellis.layout galaxyMeasure.node currentW currentH
+        -- Measure and layout the province map widget
+        let provinceMapMeasure ← runWithFonts fontRegistry
+          (Afferent.Arbor.measureWidget provinceMapWidgetTree currentW currentH)
+        let provinceMapLayouts := Trellis.layout provinceMapMeasure.node currentW currentH
 
         -- Build the name map for hit testing
-        let nameMap := buildNameMap galaxyMeasure.widget
+        let nameMap := buildNameMap provinceMapMeasure.widget
 
         -- Get mouse state for hover/click events
         let (mouseX, mouseY) ← canvas.ctx.window.getMousePos
@@ -250,13 +203,13 @@ def main : IO Unit := do
         let leftDown := buttons &&& 1 != 0
 
         -- Fire hover event
-        let hitPath := Afferent.Arbor.hitTestPath galaxyMeasure.widget galaxyLayouts mouseX mouseY
+        let hitPath := Afferent.Arbor.hitTestPath provinceMapMeasure.widget provinceMapLayouts mouseX mouseY
         inputs.fireHover {
           x := mouseX
           y := mouseY
           hitPath := hitPath
-          widget := galaxyMeasure.widget
-          layouts := galaxyLayouts
+          widget := provinceMapMeasure.widget
+          layouts := provinceMapLayouts
           nameMap := nameMap
         }
 
@@ -267,8 +220,8 @@ def main : IO Unit := do
           inputs.fireClick {
             click := { button := 0, x := mouseX, y := mouseY, modifiers := 0 }
             hitPath := hitPath
-            widget := galaxyMeasure.widget
-            layouts := galaxyLayouts
+            widget := provinceMapMeasure.widget
+            layouts := provinceMapLayouts
             nameMap := nameMap
           }
         if !leftDown && wasLeftDown then
@@ -278,8 +231,8 @@ def main : IO Unit := do
             y := mouseY
             button := 0
             hitPath := hitPath
-            widget := galaxyMeasure.widget
-            layouts := galaxyLayouts
+            widget := provinceMapMeasure.widget
+            layouts := provinceMapLayouts
             nameMap := nameMap
           }
         prevLeftDown.set leftDown
@@ -290,19 +243,19 @@ def main : IO Unit := do
           inputs.fireScroll {
             scroll := { x := mouseX, y := mouseY, deltaX := 0.0, deltaY := scrollY }
             hitPath := hitPath
-            widget := galaxyMeasure.widget
-            layouts := galaxyLayouts
+            widget := provinceMapMeasure.widget
+            layouts := provinceMapLayouts
             nameMap := nameMap
           }
           canvas.ctx.window.clearScroll
 
-        -- Collect and execute galaxy render commands
-        let (galaxyCommands, _, _) ←
-          Afferent.Arbor.collectCommandsCachedWithStats canvas.renderCache galaxyMeasure.widget galaxyLayouts
+        -- Collect and execute province map render commands
+        let (provinceMapCommands, _, _) ←
+          Afferent.Arbor.collectCommandsCachedWithStats canvas.renderCache provinceMapMeasure.widget provinceMapLayouts
 
         canvas ← CanvasM.run' canvas do
-          Afferent.Widget.executeCommandsBatched fontRegistry galaxyCommands
-          Afferent.Widget.renderCustomWidgets galaxyMeasure.widget galaxyLayouts
+          Afferent.Widget.executeCommandsBatched fontRegistry provinceMapCommands
+          Afferent.Widget.renderCustomWidgets provinceMapMeasure.widget provinceMapLayouts
 
       -- Debug: FPS counter (always shown)
       canvas ← CanvasM.run' canvas do
