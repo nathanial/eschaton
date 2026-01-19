@@ -84,6 +84,8 @@ structure GameState where
   isDragging : Bool     -- true when left mouse held
   lastMouseX : Float    -- for calculating drag delta
   lastMouseY : Float
+  -- Zoom state
+  zoom : Float          -- zoom level (1.0 = 100%)
 
 def GameState.create (width height : Float) : IO GameState := do
   let now ← IO.monoMsNow
@@ -99,6 +101,7 @@ def GameState.create (width height : Float) : IO GameState := do
     isDragging := false
     lastMouseX := 0.0
     lastMouseY := 0.0
+    zoom := 1.0
   }
 
 end Eschaton
@@ -253,12 +256,35 @@ def main : IO Unit := do
           if state.isDragging then
             state := { state with isDragging := false }
 
+        -- Handle scroll wheel for zooming
+        let (_, scrollY) ← canvas.ctx.window.getScrollDelta
+        if scrollY != 0.0 then
+          -- Zoom factor: scroll up = zoom in, scroll down = zoom out
+          let zoomFactor := 1.0 + scrollY * 0.1
+          let newZoom := (state.zoom * zoomFactor).max 0.1 |>.min 10.0  -- Clamp between 0.1x and 10x
+
+          -- Zoom towards mouse position
+          let centerX := currentW / 2.0
+          let centerY := currentH / 2.0
+          -- Adjust pan so the point under the mouse stays fixed
+          let scale := newZoom / state.zoom
+          let newPanX := mouseX - centerX - (mouseX - centerX - state.panX) * scale
+          let newPanY := mouseY - centerY - (mouseY - centerY - state.panY) * scale
+
+          state := { state with
+            zoom := newZoom
+            panX := newPanX
+            panY := newPanY
+          }
+          canvas.ctx.window.clearScroll
+
         -- Galaxy screen: show galaxy widget with animated stars
         let galaxyConfig := { state.galaxyConfig with
           labelFont := some _debugFontId
           time := t
           panX := state.panX
           panY := state.panY
+          zoom := state.zoom
         }
         let galaxyBuilder := Eschaton.Widget.galaxyWidget galaxyConfig
         let galaxyWidgetTree := Afferent.Arbor.buildFrom 2 galaxyBuilder
