@@ -81,21 +81,19 @@ def provinceMapSpecWithState (staticConfig : ProvinceMapStaticConfig)
   measure := fun _ _ => (0, 0)  -- Use layout-provided size
   collect := fun layout =>
     let rect := layout.contentRect
-    -- Screen center for zoom origin
+    -- Screen center for zoom origin (relative to content rect)
     let centerX := rect.width / 2.0
     let centerY := rect.height / 2.0
 
-    -- Screen dimensions for NDC conversion (use rect dimensions since we translate)
-    let screenWidth := rect.width
-    let screenHeight := rect.height
-
     Afferent.Arbor.RenderM.build do
-      RenderM.pushTranslate rect.x rect.y
-
       -- Fill background (ocean color, not affected by pan/zoom)
+      -- Use pushTranslate for the background rect since it uses local coordinates
+      RenderM.pushTranslate rect.x rect.y
       RenderM.fillRect' 0 0 rect.width rect.height staticConfig.backgroundColor
+      RenderM.popTransform
 
       -- Build tessellated fill batch from all provinces
+      -- Batch uses absolute screen coordinates (rect offset is added in addPolygon)
       let fillBatch := Id.run do
         let mut batch := TessellatedBatch.withCapacity staticConfig.provinces.size
         for i in [:staticConfig.provinces.size] do
@@ -111,10 +109,10 @@ def provinceMapSpecWithState (staticConfig : ProvinceMapStaticConfig)
               else province.fillColor
 
             -- Add province to batch with transform and color
+            -- Pass rect.x, rect.y so positions are in absolute screen coordinates
             batch := batch.addPolygon province.tessellated
-              viewState.panX viewState.panY viewState.zoom
+              rect.x rect.y viewState.panX viewState.panY viewState.zoom
               centerX centerY rect.width rect.height
-              screenWidth screenHeight
               (Afferent.Color.rgba fillColor.r fillColor.g fillColor.b fillColor.a)
         batch
 
@@ -123,14 +121,15 @@ def provinceMapSpecWithState (staticConfig : ProvinceMapStaticConfig)
         RenderM.fillTessellatedBatch fillBatch.vertices fillBatch.indices fillBatch.vertexCount
 
       -- Build stroke batch from all province borders
+      -- Stroke batch also uses absolute screen coordinates
       let strokeBatch := Id.run do
         let mut batch := StrokeBatch.withCapacity staticConfig.provinces.size
         for i in [:staticConfig.provinces.size] do
           if h : i < staticConfig.provinces.size then
             let province := staticConfig.provinces[i]
-            -- Add province border to batch
+            -- Add province border to batch (with rect offset)
             batch := batch.addPolygonBorder province.tessellated
-              viewState.panX viewState.panY viewState.zoom
+              rect.x rect.y viewState.panX viewState.panY viewState.zoom
               centerX centerY rect.width rect.height
               (Afferent.Color.rgba province.borderColor.r province.borderColor.g province.borderColor.b province.borderColor.a)
         batch
@@ -140,20 +139,23 @@ def provinceMapSpecWithState (staticConfig : ProvinceMapStaticConfig)
         RenderM.strokeLineBatch strokeBatch.data strokeBatch.lineCount staticConfig.borderWidth
 
       -- Draw labels if font provided (centered on province centroids)
+      -- Labels use pushTranslate since fillText expects local coordinates
       if let some font := staticConfig.labelFont then
-        -- Transform a normalized position (0-1) to screen coords with zoom and pan
-        let transformToScreen (normX normY : Float) : Float × Float :=
+        RenderM.pushTranslate rect.x rect.y
+
+        -- Transform a normalized position (0-1) to local coords with zoom and pan
+        let transformToLocal (normX normY : Float) : Float × Float :=
           let baseX := normX * rect.width
           let baseY := normY * rect.height
-          let screenX := centerX + (baseX - centerX) * viewState.zoom + viewState.panX
-          let screenY := centerY + (baseY - centerY) * viewState.zoom + viewState.panY
-          (screenX, screenY)
+          let localX := centerX + (baseX - centerX) * viewState.zoom + viewState.panX
+          let localY := centerY + (baseY - centerY) * viewState.zoom + viewState.panY
+          (localX, localY)
 
         for i in [:staticConfig.provinces.size] do
           if h : i < staticConfig.provinces.size then
             let province := staticConfig.provinces[i]
             let centroid := province.polygon.centroid
-            let (cx, cy) := transformToScreen centroid.x centroid.y
+            let (cx, cy) := transformToLocal centroid.x centroid.y
 
             -- Highlight label for selected province
             let labelColor :=
@@ -164,7 +166,7 @@ def provinceMapSpecWithState (staticConfig : ProvinceMapStaticConfig)
 
             RenderM.fillText province.name cx cy font labelColor
 
-      RenderM.popTransform  -- pop rect translate
+        RenderM.popTransform
   draw := none
 }
 
