@@ -15,16 +15,15 @@ namespace Eschaton
 /-- Game state. -/
 structure GameState where
   lastTime : Nat
-  starfield : Widget.StarfieldState
+  starfieldConfig : Widget.StarfieldConfig
   screenWidth : Float
   screenHeight : Float
 
 def GameState.create (width height : Float) : IO GameState := do
   let now ← IO.monoMsNow
-  let starfield := Widget.StarfieldState.create {}
   pure {
     lastTime := now
-    starfield := starfield
+    starfieldConfig := {}
     screenWidth := width
     screenHeight := height
   }
@@ -99,8 +98,8 @@ def main : IO Unit := do
       -- Get current window size
       let (currentW, currentH) ← canvas.ctx.getCurrentSize
 
-      -- Build the starfield widget
-      let starfieldBuilder := Eschaton.Widget.starfieldWidget state.starfield t
+      -- Build the starfield widget (GPU shader-based)
+      let starfieldBuilder := Eschaton.Widget.starfieldWidget state.starfieldConfig t
       let starfieldWidget := Afferent.Arbor.buildFrom 1 starfieldBuilder
 
       -- Measure and layout the widget to fill the screen
