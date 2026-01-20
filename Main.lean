@@ -112,12 +112,14 @@ def main : IO Unit := do
   let titleFont ← Afferent.Font.load "/System/Library/Fonts/Helvetica.ttc" (48 * screenScale).toUInt32
   let subtitleFont ← Afferent.Font.load "/System/Library/Fonts/Helvetica.ttc" (24 * screenScale).toUInt32
   let debugFont ← Afferent.Font.load "/System/Library/Fonts/Monaco.ttf" (14 * screenScale).toUInt32
+  let provinceLabelFont ← Afferent.Font.load "/System/Library/Fonts/Monaco.ttf" (7 * screenScale).toUInt32
 
   -- Create font registry for Arbor
   let (fontRegistry, debugFontId) := FontRegistry.empty.register debugFont "debug"
+  let (fontRegistry, provinceLabelFontId) := fontRegistry.register provinceLabelFont "provinceLabel"
 
   -- Game configuration
-  let provinceMapConfig := { Eschaton.sampleProvinceMapConfig with labelFont := some debugFontId }
+  let provinceMapConfig := { Eschaton.sampleProvinceMapConfig with labelFont := some provinceLabelFontId }
   let hitInfos := toProvinceHitInfoArray provinceMapConfig.provinces
 
   -- Initialize FRP environment
@@ -407,5 +409,6 @@ def main : IO Unit := do
   titleFont.destroy
   subtitleFont.destroy
   debugFont.destroy
+  provinceLabelFont.destroy
   canvas.destroy
   IO.println "Done!"
