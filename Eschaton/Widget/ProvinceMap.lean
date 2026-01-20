@@ -164,7 +164,9 @@ def provinceMapSpecWithState (staticConfig : ProvinceMapStaticConfig)
               else
                 staticConfig.labelColor
 
-            RenderM.fillText province.name cx cy font labelColor
+            -- Create a bounding rect centered on the centroid
+            let labelRect := Rect.mk' (cx - 100) (cy - 20) 200 40
+            RenderM.fillTextBlock province.name labelRect font labelColor .center .middle
 
         RenderM.popTransform
   draw := none
