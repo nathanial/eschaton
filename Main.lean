@@ -15,6 +15,7 @@ open Afferent.Canopy
 open Afferent.Canopy.Reactive
 open Reactive Reactive.Host Reactive.Host.Spider
 open Linalg
+open Eschaton (generateDefaultProvinces)
 open Eschaton.Widget (StarfieldConfig starfieldWidget ProvinceMapStaticConfig provinceMapSpecWithState
   Province toProvinceHitInfoArray)
 open Eschaton.Widget.ProvinceMap (ProvinceMapViewState reactiveProvinceMap)
@@ -82,6 +83,12 @@ def sampleProvinceMapConfig : ProvinceMapStaticConfig :=
     borderWidth := 1.5
   }
 
+private structure ProvinceGenState where
+  seed : Nat
+  relaxations : Nat
+  provinces : Array Widget.Province
+deriving Inhabited
+
 end Eschaton
 
 def main : IO Unit := do
@@ -118,9 +125,10 @@ def main : IO Unit := do
   let (fontRegistry, debugFontId) := FontRegistry.empty.register debugFont "debug"
   let (fontRegistry, provinceLabelFontId) := fontRegistry.register provinceLabelFont "provinceLabel"
 
-  -- Game configuration
-  let provinceMapConfig := { Eschaton.sampleProvinceMapConfig with labelFont := some provinceLabelFontId }
-  let hitInfos := toProvinceHitInfoArray provinceMapConfig.provinces
+  -- Province generation defaults
+  let provinceCount : Nat := 2000
+  let initialSeed : Nat := 42
+  let initialRelaxations : Int := 0
 
   -- Initialize FRP environment
   let spiderEnv ← SpiderEnv.new defaultErrorHandler
@@ -155,16 +163,86 @@ def main : IO Unit := do
   -- Track mouse button state for click/mouseup (manual since Window doesn't have this built-in)
   let prevLeftDown ← IO.mkRef false
 
-  -- Run the FRP setup to create the reactive province map widget
-  let ((_provinceMapResult, provinceMapRender), inputs) ← (do
+  -- Run the FRP setup to create the reactive UI
+  let ((_uiResult, uiRender), inputs) ← (do
     let (events, inputs) ← createInputs
     let result ← ReactiveM.run events do
       runWidget do
-        -- Create the render spec function that captures provinceMapConfig
-        let renderSpec := fun (viewState : ProvinceMapViewState) =>
-          provinceMapSpecWithState provinceMapConfig viewState
+        let theme : Theme := { Theme.dark with font := debugFontId, smallFont := debugFontId }
+        let stepperConfig : StepperConfig := {
+          min := 0
+          max := 10
+          step := 1
+          width := 140
+          height := 32
+          buttonWidth := 32
+          cornerRadius := theme.cornerRadius
+        }
 
-        reactiveProvinceMap hitInfos renderSpec
+        let initialRelaxationsNat := Int.toNat initialRelaxations
+        let initialProvinces := generateDefaultProvinces provinceCount initialSeed initialRelaxationsNat
+        let initialState : Eschaton.ProvinceGenState := {
+          seed := initialSeed
+          relaxations := initialRelaxationsNat
+          provinces := initialProvinces
+        }
+
+        let rootStyle : Afferent.Arbor.BoxStyle := {
+          width := .percent 1.0
+          height := .percent 1.0
+          backgroundColor := some (Color.gray 0.05)
+        }
+
+        flexRow' { Trellis.FlexContainer.row 0 with alignItems := .stretch } (style := rootStyle) do
+          let sidebarStyle : Afferent.Arbor.BoxStyle := {
+            width := .length 260
+            height := .percent 1.0
+            padding := Trellis.EdgeInsets.uniform 16
+            backgroundColor := some (Color.gray 0.12)
+            borderColor := some (Color.gray 0.2)
+            borderWidth := 1
+            flexItem := some (Trellis.FlexItem.fixed 260)
+          }
+
+          let contentStyle : Afferent.Arbor.BoxStyle := {
+            width := .percent 1.0
+            height := .percent 1.0
+            flexItem := some (Trellis.FlexItem.growing 1)
+          }
+
+          let (lloydStepper, regenClick) ← column' (gap := 12) (style := sidebarStyle) do
+            heading3' "Province Generator" theme
+            caption' "Lloyd relaxations" theme
+            let stepperResult ← stepper theme initialRelaxations stepperConfig
+            let _ ← dynWidget stepperResult.value fun value =>
+              caption' s!"Relaxations: {value}" theme
+            let regenClick ← button "Regenerate" theme .primary
+            pure (stepperResult, regenClick)
+
+          let stateDyn ← Reactive.foldDynM
+            (fun _ (state : Eschaton.ProvinceGenState) => SpiderM.liftIO do
+              let relaxInt ← lloydStepper.value.sample
+              let relaxNat := Int.toNat relaxInt
+              let newSeed := state.seed + 1
+              let provinces := generateDefaultProvinces provinceCount newSeed relaxNat
+              pure (⟨newSeed, relaxNat, provinces⟩ : Eschaton.ProvinceGenState)
+            )
+            initialState
+            regenClick
+
+          column' (gap := 0) (style := contentStyle) do
+            let _ ← dynWidget stateDyn fun state => do
+              let mapConfig : ProvinceMapStaticConfig := {
+                provinces := state.provinces
+                backgroundColor := Color.rgb 0.15 0.2 0.3
+                borderWidth := 1.5
+                labelFont := some provinceLabelFontId
+              }
+              let hitInfos := toProvinceHitInfoArray state.provinces
+              let renderSpec := fun (viewState : ProvinceMapViewState) =>
+                provinceMapSpecWithState mapConfig viewState
+              let _ ← reactiveProvinceMap hitInfos renderSpec
+              pure ()
     pure (result, inputs)
   ).run spiderEnv
 
@@ -304,10 +382,10 @@ def main : IO Unit := do
 
         -- Timing: Build phase
         let tBuild0 ← IO.monoMsNow
-        let provinceMapBuilder ← provinceMapRender
-        let provinceMapContent := Afferent.Arbor.buildFrom 2 provinceMapBuilder
+        let uiBuilder ← uiRender
+        let uiContent := Afferent.Arbor.buildFrom 2 uiBuilder
         -- Wrap content with footer
-        let provinceMapWidgetTree := Eschaton.wrapWithFooter provinceMapContent debugFontId screenScale
+        let provinceMapWidgetTree := Eschaton.wrapWithFooter uiContent debugFontId screenScale
           footerLine1 footerLine2 footerLine3 footerLine4
 
         -- Timing: Measure/Layout phase

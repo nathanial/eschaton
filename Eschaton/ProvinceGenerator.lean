@@ -30,6 +30,8 @@ structure ProvinceGenConfig where
   minDistance : Float := 0.08
   /-- Margin from edges to avoid edge cases -/
   edgeMargin : Float := 0.02
+  /-- Number of Lloyd relaxation iterations to apply to seed points -/
+  lloydRelaxations : Nat := 0
 deriving Inhabited
 
 /-- Simple linear congruential generator for deterministic randomness -/
@@ -152,42 +154,52 @@ def generateProvinces (config : ProvinceGenConfig)
   -- Generate or use provided seed points
   let seedPoints := generateSeedPoints config
 
-  -- Generate Voronoi diagram
-  let voronoiResult := Voronoi.generate seedPoints config.bounds
+  let points :=
+    if config.lloydRelaxations == 0 then
+      some seedPoints
+    else
+      Voronoi.lloydRelaxation seedPoints config.bounds config.lloydRelaxations
 
-  match voronoiResult with
-  | none =>
-    -- Fallback: return empty array if triangulation fails
-    #[]
-  | some polygons =>
-    let mut provinces : Array Widget.Province := #[]
+  match points with
+  | none => #[]
+  | some sites =>
+    -- Generate Voronoi diagram
+    let voronoiResult := Voronoi.generate sites config.bounds
 
-    -- Get names
-    let provinceNames := names.getD defaultProvinceNames
+    match voronoiResult with
+    | none =>
+      -- Fallback: return empty array if triangulation fails
+      #[]
+    | some polygons =>
+      let mut provinces : Array Widget.Province := #[]
 
-    -- Get colors
-    let rng := LCG.new (config.seed + 1000)
-    let provinceColors := colors.getD (generateColorPalette rng seedPoints.size)
+      -- Get names
+      let provinceNames := names.getD defaultProvinceNames
 
-    for i in [:polygons.size] do
-      let polygon := polygons[i]!
+      -- Get colors
+      let rng := LCG.new (config.seed + 1000)
+      let provinceColors := colors.getD (generateColorPalette rng seedPoints.size)
 
-      -- Skip degenerate polygons
-      if polygon.vertices.size < 3 then continue
+      for i in [:polygons.size] do
+        let polygon := polygons[i]!
 
-      let name := provinceNames[i % provinceNames.size]!
-      let color := provinceColors[i % provinceColors.size]!
+        -- Skip degenerate polygons
+        if polygon.vertices.size < 3 then continue
 
-      -- Use Province.create to pre-tessellate geometry at load time
-      let province := Widget.Province.create
-        i name polygon color (Color.rgba 0.15 0.15 0.15 1.0)
+        let name := provinceNames[i % provinceNames.size]!
+        let color := provinceColors[i % provinceColors.size]!
 
-      provinces := provinces.push province
+        -- Use Province.create to pre-tessellate geometry at load time
+        let province := Widget.Province.create
+          i name polygon color (Color.rgba 0.15 0.15 0.15 1.0)
 
-    return provinces
+        provinces := provinces.push province
+
+      return provinces
 
 /-- Quick province generation with default settings -/
-def generateDefaultProvinces (numProvinces : Nat := 24) (seed : Nat := 42) : Array Widget.Province :=
+def generateDefaultProvinces (numProvinces : Nat := 24) (seed : Nat := 42)
+    (lloydRelaxations : Nat := 0) : Array Widget.Province :=
   -- Scale minDistance inversely with sqrt of province count to maintain good spacing
   let scaleFactor := Float.sqrt (24.0 / numProvinces.toFloat)
   generateProvinces {
@@ -196,6 +208,7 @@ def generateDefaultProvinces (numProvinces : Nat := 24) (seed : Nat := 42) : Arr
     bounds := AABB2D.fromMinMax Vec2.zero Vec2.one
     minDistance := 0.12 * scaleFactor
     edgeMargin := 0.03
+    lloydRelaxations := lloydRelaxations
   }
 
 end Eschaton
