@@ -195,13 +195,15 @@ def main : IO Unit := do
 
         flexRow' { Trellis.FlexContainer.row 0 with alignItems := .stretch } (style := rootStyle) do
           let sidebarStyle : Afferent.Arbor.BoxStyle := {
-            width := .length 260
+            width := .length 500
+            minWidth := .some 500
+            maxWidth := .some 500
             height := .percent 1.0
             padding := Trellis.EdgeInsets.uniform 16
             backgroundColor := some (Color.gray 0.12)
             borderColor := some (Color.gray 0.2)
             borderWidth := 1
-            flexItem := some (Trellis.FlexItem.fixed 260)
+            flexItem := some (Trellis.FlexItem.fixed 500)
           }
 
           let contentStyle : Afferent.Arbor.BoxStyle := {
