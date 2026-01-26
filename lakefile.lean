@@ -28,7 +28,8 @@ def commonLinkArgs : Array String := #[
   "-lfreetype",
   "-lassimp",
   "-lz",
-  "-lc++"
+  "-lc++",
+  "-lcurl"
 ]
 
 lean_exe eschaton where

@@ -164,11 +164,11 @@ def main : IO Unit := do
   let prevLeftDown ← IO.mkRef false
 
   -- Run the FRP setup to create the reactive UI
+  let theme : Theme := { Theme.dark with font := debugFontId, smallFont := debugFontId }
   let ((_uiResult, uiRender), inputs) ← (do
-    let (events, inputs) ← createInputs
+    let (events, inputs) ← createInputs fontRegistry theme
     let result ← ReactiveM.run events do
       runWidget do
-        let theme : Theme := { Theme.dark with font := debugFontId, smallFont := debugFontId }
         let stepperConfig : StepperConfig := {
           min := 0
           max := 10
@@ -213,12 +213,12 @@ def main : IO Unit := do
           }
 
           let (lloydStepper, regenClick) ← column' (gap := 12) (style := sidebarStyle) do
-            heading3' "Province Generator" theme
-            caption' "Lloyd relaxations" theme
-            let stepperResult ← stepper theme initialRelaxations stepperConfig
+            heading3' "Province Generator"
+            caption' "Lloyd relaxations"
+            let stepperResult ← stepper initialRelaxations stepperConfig
             let _ ← dynWidget stepperResult.value fun value =>
-              caption' s!"Relaxations: {value}" theme
-            let regenClick ← button "Regenerate" theme .primary
+              caption' s!"Relaxations: {value}"
+            let regenClick ← button "Regenerate" .primary
             pure (stepperResult, regenClick)
 
           let stateDyn ← Reactive.foldDynM
